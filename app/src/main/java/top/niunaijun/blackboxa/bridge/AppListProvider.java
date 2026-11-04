@@ -13,6 +13,8 @@ import java.util.List;
 import top.niunaijun.blackbox.BlackBoxCore;
 
 public class AppListProvider extends ContentProvider {
+    private static final String[] COLS = new String[]{"pkg", "label", "user"};
+
     @Override
     public boolean onCreate() {
         return true;
@@ -21,15 +23,27 @@ public class AppListProvider extends ContentProvider {
     @Override
     public Cursor query(Uri uri, String[] projection, String selection,
                         String[] selectionArgs, String sortOrder) {
-        MatrixCursor c = new MatrixCursor(new String[]{"pkg", "label", "user"});
-        PackageManager pm = BlackBoxCore.getPackageManager();
-        for (var u : BlackBoxCore.get().getUsers()) {
-            List<ApplicationInfo> apps = BlackBoxCore.get().getInstalledApplications(0, u.id);
-            for (ApplicationInfo ai : apps) {
-                c.addRow(new Object[]{ai.packageName, ai.loadLabel(pm).toString(), u.id});
+        Throwable last = null;
+        // The core may still be starting when the first query arrives, so retry for a few seconds.
+        for (int attempt = 0; attempt < 12; attempt++) {
+            try {
+                MatrixCursor c = new MatrixCursor(COLS);
+                PackageManager pm = BlackBoxCore.getPackageManager();
+                for (var u : BlackBoxCore.get().getUsers()) {
+                    List<ApplicationInfo> apps = BlackBoxCore.get().getInstalledApplications(0, u.id);
+                    for (ApplicationInfo ai : apps) {
+                        c.addRow(new Object[]{ai.packageName, ai.loadLabel(pm).toString(), u.id});
+                    }
+                }
+                return c;
+            } catch (Throwable t) {
+                last = t;
+                try { Thread.sleep(500); } catch (InterruptedException ignored) { }
             }
         }
-        return c;
+        MatrixCursor err = new MatrixCursor(COLS);
+        err.addRow(new Object[]{"__error__", last.getClass().getName() + ": " + last.getMessage(), -1});
+        return err;
     }
 
     @Override public String getType(Uri uri) { return null; }
